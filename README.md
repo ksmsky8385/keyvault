@@ -30,9 +30,15 @@ Make sure `~/.local/bin` is on your PATH, then run `keyv`.
 
 ## Open and use the vault
 
-- **My keyvault** lists platforms alphabetically within each type. Pick a
+- **View keys** lists platforms alphabetically within each type. Pick a
   platform and entry by number to reveal its decrypted contents in the terminal.
-- **Add key** stores an account or API key locally. Platform names group
+  Choose **Copy ID** or **Copy password** for an account, or **Copy key** for an
+  API key. After copying to the system clipboard, the same menu appears again.
+  Copying uses `pbcopy` on macOS, `wl-copy` on Wayland, or `xclip` or `xsel` on X11.
+- **Sync vault** fetches and merges the repository’s default branch and pushes
+  local revisions. It reports **No changes.** when there is nothing to sync.
+  A new empty repository starts on `main`. Every device needs the same master key.
+- **Settings → Add key** stores an account or API key locally. Platform names group
   case-insensitively within each type.
 - **Settings → Edit key** opens the selected entry's **Edit** and **Delete**
   actions. Press Enter to retain a value while editing. Where shown in the
@@ -43,9 +49,6 @@ Make sure `~/.local/bin` is on your PATH, then run `keyv`.
   or its GitHub URL. keyv uses HTTPS and checks the repository is private
   when connecting and updating. Configure a Git commit identity before
   syncing.
-- **Settings → Update key** fetches and merges the repository’s default
-  branch and pushes local revisions. A new empty repository starts on
-  `main`. Every device needs the same master key.
 
 Git reads authentication from your configured credential helper. When no
 credential is available, Git shows its username and password prompts in
@@ -81,10 +84,10 @@ entry before syncing, both revisions appear in the menu. Select the version
 you want under **Edit key**, apply any edits and sync again to resolve it.
 If deletion and an edit arrive together, choose **Delete** to keep the
 entry removed or save an edit to keep it. Deletion hides the entry after
-sync across upgraded devices. Upgrade every device to keyv 0.2.0 before
+sync across upgraded devices. Upgrade every device to a release that supports deletion before
 using **Delete**. Old encrypted revisions remain in Git history. Git commits use
 `keyv: update vault` and, when needed, `keyv: merge vault`.
 
 Connecting a different repository copies the current encrypted vault into
 the new clone. Previous working copies remain in the private state directory.
-Connecting fetches the remote contents. Use **Update key** to publish local data.
+Connecting fetches the remote contents. Use **Sync vault** to publish local data.

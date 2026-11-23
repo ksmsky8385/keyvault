@@ -5,6 +5,7 @@ import fcntl
 import getpass
 import os
 import shutil
+import subprocess
 import sys
 import warnings
 from collections import Counter, defaultdict
@@ -12,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from unicodedata import combining, east_asian_width
 
+from . import __version__
 from .repository import Repository
 from .vault import Entry, Revision, Vault, VaultError
 
@@ -150,6 +152,33 @@ def finished() -> None:
     submenu("Continue?", [], home=True, exit_menu=True)
 
 
+def copy_to_clipboard(value: str) -> None:
+    commands = []
+    if sys.platform == "darwin":
+        commands.append(("pbcopy",))
+    if os.environ.get("WAYLAND_DISPLAY"):
+        commands.append(("wl-copy",))
+    if os.environ.get("DISPLAY"):
+        commands.extend((("xclip", "-selection", "clipboard"), ("xsel", "--clipboard", "--input")))
+
+    environment = os.environ.copy()
+    environment.pop("KEYV_MASTER", None)
+    for program, *args in commands:
+        executable = shutil.which(program)
+        if executable is None:
+            continue
+        try:
+            result = subprocess.run(
+                [executable, *args], input=value.encode("utf-8"), env=environment,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        except OSError:
+            continue
+        if result.returncode == 0:
+            return
+    raise VaultError("Clipboard unavailable. Check your desktop session and clipboard tool.")
+
+
 class Menu:
     def __init__(self, repository: Repository):
         self.repository = repository
@@ -221,7 +250,14 @@ class Menu:
         print()
         for label, value in fields:
             print(f"  {color(label.ljust(field_width), '1')}  {display(value)}")
-        finished()
+        copy_options = ["Copy ID", "Copy password"] if entry.kind == "account" else ["Copy key"]
+        while (index := submenu("Continue?", copy_options, home=True, exit_menu=True)) is not None:
+            try:
+                copy_to_clipboard(fields[index][1])
+            except VaultError as error:
+                error_message(error)
+            else:
+                status("Copied to clipboard.", "32")
 
     def add(self) -> None:
         while (kind := self.kind()) is not None:
@@ -283,15 +319,13 @@ class Menu:
 
     def settings(self) -> None:
         while True:
-            action = submenu("Settings", ["Edit key", "Update key", "Vault settings"])
+            action = submenu("Settings", ["Add key", "Edit key", "Vault settings"])
             if action is None:
                 return
             if action == 0:
-                self.browse(editing=True)
+                self.add()
             elif action == 1:
-                self.repository.sync()
-                status("Vault is up to date.", "32")
-                finished()
+                self.browse(editing=True)
             else:
                 self.vault_settings()
 
@@ -305,9 +339,11 @@ class Menu:
             status("Repository connected.", "32")
 
     def run(self) -> None:
-        actions = (self.browse, self.add, self.settings)
+        actions = (self.browse, self.sync_vault, self.settings)
         while True:
-            index = choose("keyv", ["My keyvault", "Add key", "Settings", "Exit"])
+            index = choose(
+                f"keyvault ver {__version__}", ["View keys", "Sync vault", "Settings", "Exit"],
+            )
             if index == 3:
                 return
             try:
@@ -319,10 +355,16 @@ class Menu:
             except (VaultError, OSError, ValueError) as error:
                 error_message(error)
 
+    def sync_vault(self) -> None:
+        if self.repository.sync():
+            status("Vault updated.", "32")
+        else:
+            status("No changes.", "33")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Encrypted account and API key vault")
-    parser.add_argument("--version", action="version", version="%(prog)s 0.2.2")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.parse_args()
     try:
         root = state_home()

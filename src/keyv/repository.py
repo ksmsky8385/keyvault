@@ -167,15 +167,16 @@ class Repository:
         if changes.returncode:
             git(self.directory, "commit", "--only", "-m", "keyv: update vault", "--", "events")
 
-    def sync(self) -> None:
+    def sync(self) -> bool:
         address = self.remote()
         if not address:
             raise VaultError("No connection. Set a vault repository first.")
         credential = self.credential(address)
-        self.sync_private(credential)
+        updated = self.sync_private(credential)
         self.approve_credential(credential)
+        return updated
 
-    def sync_private(self, credential: GitHubCredential) -> None:
+    def sync_private(self, credential: GitHubCredential) -> bool:
         directory = self.directory
         url = credential.repository.url
         self.vault.load(directory)
@@ -192,6 +193,7 @@ class Repository:
                 for status, path in zip(staged[::2], staged[1::2])
             ):
                 raise VaultError("The vault has unexpected staged Git changes.")
+        original_head = git(directory, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).stdout
         self.commit_local()
         for attempt in range(3):
             branch = self.remote_branch(credential)
@@ -224,13 +226,16 @@ class Repository:
                         raise
                 else:
                     git(directory, "reset", "--keep", ref)
-            if not self.has_head(directory):
-                return
-            if exists and git(directory, "rev-parse", "HEAD").stdout == git(directory, "rev-parse", ref).stdout:
-                return
+            head = git(directory, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).stdout
+            if not head:
+                return False
+            if exists and head == git(directory, "rev-parse", ref).stdout:
+                return head != original_head
             try:
-                git(directory, "push", url, f"HEAD:refs/heads/{branch}", credential=credential)
-                return
+                result = git(directory, "push", "--porcelain", url, f"HEAD:refs/heads/{branch}", credential=credential)
+                return head != original_head or any(
+                    line.startswith((b" \t", b"*\t")) for line in result.stdout.splitlines()
+                )
             except GitError:
                 current = git(directory, "ls-remote", "--heads", url, f"refs/heads/{branch}", credential=credential).stdout
                 old = git(directory, "rev-parse", ref).stdout.strip() if exists else b""
