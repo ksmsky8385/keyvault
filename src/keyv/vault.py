@@ -114,8 +114,13 @@ class Vault:
                 or (not parents and (entry_id != event_id or deleted))
                 or entry.kind not in ("account", "api")
                 or not all(isinstance(value, str) for value in vars(entry).values())
-                or not all((entry.platform, entry.name, entry.secret))
-                or (entry.kind == "account" and not entry.login)
+                or (
+                    not (deleted and not any((entry.platform, entry.name, entry.login, entry.secret)))
+                    and (
+                        not all((entry.platform, entry.name, entry.secret))
+                        or (entry.kind == "account" and not entry.login)
+                    )
+                )
             ):
                 raise ValueError
             revision = Revision(event_id, entry_id, tuple(parents), entry, deleted)
@@ -124,14 +129,26 @@ class Vault:
         self.cache[event_id] = (data, revision)
         return revision
 
+    @staticmethod
+    def purged_ids(revisions: dict[str, Revision]) -> set[str]:
+        return {
+            revision.entry_id for revision in revisions.values()
+            if revision.deleted and not revision.entry.secret
+        }
+
     def heads(self, revisions: dict[str, Revision]) -> list[Revision]:
         children = defaultdict(list)
         pending = {}
+        purged = self.purged_ids(revisions)
         for revision in revisions.values():
-            pending[revision.id] = len(revision.parents)
+            pending[revision.id] = 0
             for parent in revision.parents:
-                if parent not in revisions or revisions[parent].entry_id != revision.entry_id:
+                previous = revisions.get(parent)
+                if previous is None and revision.entry_id in purged:
+                    continue
+                if previous is None or previous.entry_id != revision.entry_id:
                     raise VaultError("Vault revision history is incomplete.")
+                pending[revision.id] += 1
                 children[parent].append(revision.id)
         ready = [event_id for event_id, count in pending.items() if not count]
         visited = 0
@@ -143,7 +160,10 @@ class Vault:
                     ready.append(child)
         if visited != len(revisions):
             raise VaultError("Vault revision history contains a cycle.")
-        return [revision for revision in revisions.values() if revision.id not in children]
+        return [
+            revision for revision in revisions.values()
+            if revision.id not in children and revision.entry_id not in purged
+        ]
 
     def load(self, directory: Path) -> dict[str, Revision]:
         events = directory / "events"
@@ -161,10 +181,27 @@ class Vault:
         self.heads(revisions)
         return revisions
 
+    def prune_deleted(self, directory: Path) -> None:
+        revisions = self.load(directory)
+        heads = defaultdict(list)
+        for revision in self.heads(revisions):
+            heads[revision.entry_id].append(revision)
+        for versions in heads.values():
+            if all(revision.deleted for revision in versions):
+                self.save(directory, versions[0].entry, versions, deleted=True)
+        revisions = self.load(directory)
+        purged = self.purged_ids(revisions)
+        for revision in revisions.values():
+            if revision.entry_id in purged and (not revision.deleted or revision.entry.secret):
+                (directory / "events" / f"{revision.id}.keyv").unlink()
+                self.cache.pop(revision.id, None)
+
     def save(
         self, directory: Path, entry: Entry, prior: list[Revision], *, deleted: bool = False,
     ) -> None:
         event_id = uuid4().hex
+        if deleted:
+            entry = Entry(entry.kind, "", "", "", "")
         payload = {
             "entry_id": prior[0].entry_id if prior else event_id,
             "parents": sorted(revision.id for revision in prior),

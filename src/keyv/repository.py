@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from .github import GitHubCredential, GitHubRepo
-from .vault import EVENT_NAME, MAX_EVENT, Vault, VaultError, atomic_write
+from .vault import EVENT_NAME, MAX_EVENT, Revision, Vault, VaultError, atomic_write
 
 
 class GitError(VaultError):
@@ -112,7 +112,7 @@ class Repository:
                 else:
                     events.mkdir(exist_ok=True, mode=0o700)
                     atomic_write(events / filename, data)
-            self.vault.load(candidate)
+            self.vault.prune_deleted(candidate)
             atomic_write(self.pointer, f"{candidate.name}\n".encode())
             published = True
             self.directory = candidate
@@ -136,7 +136,7 @@ class Repository:
             raise VaultError("The remote default branch is unavailable.")
         return git(self.directory, "symbolic-ref", "--short", "HEAD").stdout.decode().strip()
 
-    def validate_tree(self, ref: str) -> dict[str, str]:
+    def validate_tree(self, ref: str) -> tuple[dict[str, str], dict[str, Revision]]:
         revisions = {}
         objects = {}
         listing = git(self.directory, "ls-tree", "-rzt", "--full-tree", ref, "--", "events")
@@ -157,7 +157,14 @@ class Repository:
             revisions[match[1]] = self.vault.read(match[1], data)
             objects[match[1]] = object_id
         self.vault.heads(revisions)
-        return objects
+        return objects, revisions
+
+    def validate_removals(self, previous: dict[str, Revision], current: dict[str, Revision]) -> None:
+        purged = self.vault.purged_ids(current)
+        for event_id in previous.keys() - current.keys():
+            revision = previous[event_id]
+            if revision.entry_id not in purged or (revision.deleted and not revision.entry.secret):
+                raise VaultError("An encrypted record was removed without a deletion marker.")
 
     def commit_local(self) -> None:
         if not (self.directory / "events").exists():
@@ -179,21 +186,22 @@ class Repository:
     def sync_private(self, credential: GitHubCredential) -> bool:
         directory = self.directory
         url = credential.repository.url
-        self.vault.load(directory)
         if git(directory, "rev-parse", "--verify", "--quiet", "MERGE_HEAD", allowed=(0, 1)).returncode == 0:
             raise VaultError("A Git merge is already in progress in the active vault.")
-        if git(directory, "diff", "--quiet", "--", allowed=(0, 1)).returncode:
-            raise VaultError("Tracked vault files have local modifications.")
-        if git(directory, "diff", "--cached", "--quiet", "--", allowed=(0, 1)).returncode:
-            # A previous commit may have failed after staging append-only records.
-            staged = git(directory, "diff", "--cached", "--name-status", "-z").stdout.split(b"\0")
+        for flags in ((), ("--cached",)):
+            changes = git(directory, "diff", *flags, "--no-renames", "--name-status", "-z").stdout.split(b"\0")
             if any(
-                status != b"A" or not path.startswith(b"events/")
+                status not in (b"A", b"D") or not path.startswith(b"events/")
                 or not EVENT_NAME.fullmatch(os.fsdecode(path[7:]))
-                for status, path in zip(staged[::2], staged[1::2])
+                for status, path in zip(changes[::2], changes[1::2])
             ):
-                raise VaultError("The vault has unexpected staged Git changes.")
+                raise VaultError("The vault has unexpected local Git changes.")
         original_head = git(directory, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).stdout
+        working = self.vault.load(directory)
+        if original_head:
+            _, previous = self.validate_tree("HEAD")
+            self.validate_removals(previous, working)
+        self.vault.prune_deleted(directory)
         self.commit_local()
         for attempt in range(3):
             branch = self.remote_branch(credential)
@@ -204,20 +212,18 @@ class Repository:
             )
             exists = git(directory, "rev-parse", "--verify", "--quiet", ref, allowed=(0, 1)).returncode == 0
             if exists:
-                remote = self.validate_tree(ref)
+                remote, remote_revisions = self.validate_tree(ref)
                 if self.has_head(directory):
-                    local = self.validate_tree("HEAD")
+                    local, local_revisions = self.validate_tree("HEAD")
                     if any(local[event_id] != remote[event_id] for event_id in local.keys() & remote.keys()):
                         raise VaultError("An encrypted record differs between the two histories.")
                     base = git(directory, "merge-base", "HEAD", ref, allowed=(0, 1)).stdout.strip()
                     if base:
-                        for tip in ("HEAD", ref):
-                            changed = git(
-                                directory, "diff", "--no-renames", "--diff-filter=DMRT",
-                                "--name-only", base.decode(), tip, "--", "events",
-                            ).stdout
-                            if changed:
-                                raise VaultError("An existing vault record was removed or changed in Git.")
+                        base_objects, base_revisions = self.validate_tree(base.decode())
+                        for objects, revisions in ((local, local_revisions), (remote, remote_revisions)):
+                            self.validate_removals(base_revisions, revisions)
+                            if any(objects[key] != base_objects[key] for key in objects.keys() & base_objects.keys()):
+                                raise VaultError("An existing encrypted record was changed in Git.")
                     try:
                         git(directory, "merge", "--allow-unrelated-histories", "-m", "keyv: merge vault", ref)
                     except GitError:
@@ -226,6 +232,8 @@ class Repository:
                         raise
                 else:
                     git(directory, "reset", "--keep", ref)
+            self.vault.prune_deleted(directory)
+            self.commit_local()
             head = git(directory, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1)).stdout
             if not head:
                 return False

@@ -85,11 +85,13 @@ number and commit timing. Account passwords and API keys are visible while enter
 Independent changes merge as separate files. When two devices edit the same
 entry before syncing, both revisions appear in the menu. Select the version
 you want under **Edit key**, apply any edits and sync again to resolve it.
-If deletion and an edit arrive together, choose **Delete** to keep the
-entry removed or save an edit to keep it. Deletion hides the entry after
-sync across upgraded devices. Upgrade every device to a release that supports deletion before
-using **Delete**. Old encrypted revisions remain in Git history. Git commits use
-`keyv: update vault` and, when needed, `keyv: merge vault`.
+Deleting an account or key removes its value-bearing files locally and from
+the current repository tree on sync. A small encrypted marker with no account
+or key values remains and prevents an offline edit from restoring the deleted
+entry. Update all devices to a build with this deletion behavior before
+syncing deletions. Earlier commits and saved working copies can still contain
+the original encrypted files. Git commits use `keyv: update vault` and, when
+needed, `keyv: merge vault`.
 
 Connecting a different repository copies the current encrypted vault into
 the new clone. Previous working copies remain in the private state directory.

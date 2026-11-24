@@ -348,6 +348,8 @@ class Menu:
 
     def save_entry(self, entry: Entry, prior: list[Revision], *, deleted: bool = False) -> None:
         self.repository.vault.save(self.repository.directory, entry, prior, deleted=deleted)
+        if deleted:
+            self.repository.vault.prune_deleted(self.repository.directory)
         status("Deleted locally." if deleted else "Saved locally.", "32")
         try:
             if self.repository.remote():
