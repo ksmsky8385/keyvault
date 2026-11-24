@@ -17,6 +17,11 @@ from . import __version__
 from .repository import Repository
 from .vault import Entry, Revision, Vault, VaultError
 
+try:
+    import readline
+except ImportError:
+    readline = None
+
 
 def state_home() -> Path:
     configured = Path(os.environ.get("XDG_STATE_HOME", ""))
@@ -103,6 +108,30 @@ def ask(prompt: str, *, optional: bool = False, strip: bool = True) -> str:
         if value or optional:
             return value
         print(f"  {color('A value is required.', '33')}")
+
+
+def ask_platform(options: list[str]) -> str:
+    prompt = "Platform name: "
+    if readline is None or not options or not sys.stdin.isatty():
+        return ask(prompt)
+    completer = readline.get_completer()
+    delimiters = readline.get_completer_delims()
+    matches: list[str] = []
+
+    def complete(text: str, state: int) -> str | None:
+        if state == 0:
+            prefix = platform_key(text)
+            matches[:] = [name for name in options if platform_key(name).startswith(prefix)]
+        return matches[state] if state < len(matches) else None
+
+    try:
+        readline.parse_and_bind("bind ^I rl_complete" if "libedit" in (readline.__doc__ or "") else "tab: complete")
+        readline.set_completer_delims("")
+        readline.set_completer(complete)
+        return ask(prompt)
+    finally:
+        readline.set_completer(completer)
+        readline.set_completer_delims(delimiters)
 
 
 def hidden(prompt: str, *, optional: bool = False) -> str:
@@ -263,21 +292,23 @@ class Menu:
         while (kind := self.kind()) is not None:
             heading("Add account" if kind == "account" else "Add API key")
             print()
-            platform = ask("Platform name: ")
-            key = platform_key(platform)
+            platforms = {}
+            same_type = {}
             for revision in self.heads():
-                if (
-                    not revision.deleted and revision.entry.kind == kind
-                    and platform_key(revision.entry.platform) == key
-                ):
-                    platform = revision.entry.platform
-                    break
+                if not revision.deleted:
+                    name = revision.entry.platform
+                    key = platform_key(name)
+                    platforms.setdefault(key, name)
+                    if revision.entry.kind == kind:
+                        same_type.setdefault(key, name)
+            platforms.update(same_type)
+            platform = ask_platform([platforms[key] for key in sorted(platforms) if platforms[key].isprintable()])
+            platform = platforms.get(platform_key(platform), platform)
             name = ask("Account name: " if kind == "account" else "Key name: ")
             login = ask("ID: ") if kind == "account" else ""
             secret = ask("Password: " if kind == "account" else "API key: ", strip=False)
             entry = Entry(kind, platform, name, login, secret)
-            self.repository.vault.save(self.repository.directory, entry, [])
-            status("Saved.", "32")
+            self.save_entry(entry, [])
             finished()
 
     def entry_actions(self, revision: Revision, variants: list[Revision]) -> bool:
@@ -293,8 +324,7 @@ class Menu:
                 finished()
                 return True
             if submenu("Delete this entry?", ["Confirm delete"]) == 0:
-                self.repository.vault.save(self.repository.directory, entry, variants, deleted=True)
-                status("Deleted.", "32")
+                self.save_entry(entry, variants, deleted=True)
                 finished()
                 return True
 
@@ -314,8 +344,17 @@ class Menu:
             login=login or entry.login, secret=secret or entry.secret,
         )
         if updated != entry or len(variants) > 1:
-            self.repository.vault.save(self.repository.directory, updated, variants)
-            status("Saved.", "32")
+            self.save_entry(updated, variants)
+
+    def save_entry(self, entry: Entry, prior: list[Revision], *, deleted: bool = False) -> None:
+        self.repository.vault.save(self.repository.directory, entry, prior, deleted=deleted)
+        status("Deleted locally." if deleted else "Saved locally.", "32")
+        try:
+            if self.repository.remote():
+                self.sync_vault()
+        except (VaultError, OSError, ValueError) as error:
+            error_message(error)
+            status("Local change kept. Use Sync vault to retry.", "33")
 
     def settings(self) -> None:
         while True:

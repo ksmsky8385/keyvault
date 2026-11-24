@@ -36,10 +36,13 @@ Make sure `~/.local/bin` is on your PATH, then run `keyv`.
   API key. After copying to the system clipboard, the same menu appears again.
   Copying uses `pbcopy` on macOS, `wl-copy` on Wayland, or `xclip` or `xsel` on X11.
 - **Sync vault** fetches and merges the repository’s default branch and pushes
-  local revisions. It reports **No changes.** when there is nothing to sync.
+  local revisions. With a repository connected, keyv also syncs automatically
+  after you add, edit, or delete an entry. If automatic sync fails, the local
+  change is kept and you can retry with **Sync vault**.
   A new empty repository starts on `main`. Every device needs the same master key.
 - **Settings → Add key** stores an account or API key locally. Platform names group
   case-insensitively within each type.
+  Press Tab to complete an existing platform name when adding either type.
 - **Settings → Edit key** opens the selected entry's **Edit** and **Delete**
   actions. Press Enter to retain a value while editing. Where shown in the
   footer, enter **B** for **Back** or **M** for **Main menu**. Lowercase letters
