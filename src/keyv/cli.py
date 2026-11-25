@@ -5,6 +5,7 @@ import fcntl
 import getpass
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import warnings
@@ -145,6 +146,32 @@ def hidden(prompt: str, *, optional: bool = False) -> str:
         if value or optional:
             return value
         print(f"  {color('A value is required.', '33')}")
+
+
+def load_master_key(root: Path) -> str:
+    configured = os.environ.get("KEYV_MASTER")
+    if configured:
+        return configured
+
+    path = root / "master-key"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return hidden("Enter master key: ")
+    except OSError as error:
+        raise VaultError(f"Cannot open {path}: {error.strerror}") from None
+
+    with os.fdopen(fd, encoding="utf-8") as key_file:
+        info = os.fstat(key_file.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise VaultError(f"Master key file must be a regular file owned by you with mode 600: {path}")
+        master = key_file.read().removesuffix("\n")
+    if not master or "\n" in master or "\x00" in master:
+        raise VaultError(f"Master key file must contain one non-empty line: {path}")
+    return master
 
 
 def display(value: str) -> str:
@@ -418,7 +445,7 @@ def main() -> int:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise VaultError("Another keyv session is using this vault.") from None
-            master = os.environ.get("KEYV_MASTER") or hidden("Enter master key: ")
+            master = load_master_key(root)
             repository = Repository(root, Vault(master))
             repository.vault.load(repository.directory)
             Menu(repository).run()

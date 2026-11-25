@@ -5,28 +5,18 @@ names, IDs, passwords and API keys are encrypted on disk.
 
 ## Install
 
-Requires Python 3.10+ and Git on Linux or macOS. Run the install commands
-from the package directory.
-
-If your Python permits user-site installs, use pip directly:
+Requires Python 3.10+ and Git on Linux or macOS. From the package directory,
+run:
 
 ```sh
-python3 -m pip install --user .
+./install.sh
+keyv --version
 ```
 
-The command is normally installed in `~/.local/bin`. If your OS marks Python
-as externally managed, install into a virtual environment with pip and expose
-the command in the same directory:
-
-```sh
-python3 -m venv ~/.local/share/keyv/venv
-~/.local/share/keyv/venv/bin/python -m pip install .
-mkdir -p ~/.local/bin
-ln -s ~/.local/share/keyv/venv/bin/keyv ~/.local/bin/keyv
-```
-
-Alternatively, run `pipx install .` if you already use pipx.
-Make sure `~/.local/bin` is on your PATH, then run `keyv`.
+Run `./install.sh` again to update an existing installation from this checkout.
+The installer uses pipx when available and falls back to pip in a virtual
+environment. The command is placed in `~/.local/bin` by default. Make sure the
+directory is on your PATH, then run `keyv`.
 
 ## Open and use the vault
 
@@ -62,18 +52,19 @@ the credential according to your helper settings. Git's `store` helper
 stores credentials in plaintext. keyv keeps the vault repository URL free
 of credentials.
 
-When `KEYV_MASTER` is absent or empty, keyv prompts once per launch with hidden
-input. To supply it through your shell, add the following to `~/.zshrc` or
-`~/.bashrc` and open a new shell:
+keyv reads a non-empty `KEYV_MASTER` first. Otherwise it looks for
+`~/.local/state/keyv/master-key` (or `$XDG_STATE_HOME/keyv/master-key`).
+If the file is absent, keyv prompts once per launch with hidden input.
 
-```sh
-export KEYV_MASTER='replace-with-your-master-passphrase'
-```
+To create this file, run `./setup-master-key.sh` from the package directory
+and enter the master key twice. For an existing vault, enter the same key
+you already use to unlock it. The script keeps input hidden and leaves an
+existing file in place.
 
-This stores the passphrase in plaintext in the shell configuration and exports
-it to child processes. Keep that file out of Git. Use a strong, unique
-passphrase. A new empty vault uses the first passphrase that successfully
-saves an entry.
+keyv requires a regular file owned by you with mode `600` and rejects
+symbolic links. The file holds the key in plaintext and lives outside
+the vault repository. Remove any old `KEYV_MASTER` export from your
+shell configuration and start a new shell to use the file.
 
 ## Storage and synchronization
 
