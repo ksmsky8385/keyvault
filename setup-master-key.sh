@@ -31,12 +31,25 @@ try:
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError(f"Vault state must be a private directory owned by you: {root}")
 
-    with tempfile.NamedTemporaryFile(dir=root, mode="w", encoding="utf-8") as key_file:
+    def write_key(key_file):
         os.fchmod(key_file.fileno(), 0o600)
         key_file.write(key + "\n")
         key_file.flush()
         os.fsync(key_file.fileno())
-        os.link(key_file.name, destination)
+
+    if hasattr(os, "link"):
+        with tempfile.NamedTemporaryFile(dir=root, mode="w", encoding="utf-8") as key_file:
+            write_key(key_file)
+            os.link(key_file.name, destination)
+    else:
+        # Termux Python can omit hard links. Reserve the name exclusively.
+        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as key_file:
+                write_key(key_file)
+        except BaseException:
+            destination.unlink()
+            raise
 except getpass.GetPassWarning:
     sys.exit("A terminal is required for hidden input.")
 except (EOFError, KeyboardInterrupt):
