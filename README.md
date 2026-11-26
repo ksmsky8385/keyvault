@@ -5,18 +5,23 @@ names, IDs, passwords and API keys are encrypted on disk.
 
 ## Install
 
-Requires Python 3.10+ and Git on Linux or macOS. From the package directory,
-run:
+Requires Python 3.10+ and Git. Run these commands from the package directory
+on Linux, macOS, Android (Termux), or Windows Subsystem for Linux:
 
 ```sh
-./install.sh
+sh ./install.sh
 keyv --version
 ```
 
-Run `./install.sh` again to update an existing installation from this checkout.
-The installer uses pipx when available and falls back to pip in a virtual
-environment. The command is placed in `~/.local/bin` by default. Make sure the
-directory is on your PATH, then run `keyv`.
+Run `sh ./install.sh` again to reinstall keyv from this checkout, even if the
+installed version matches.
+On Termux, the installer uses Termux Python and installs the system package
+`python-cryptography` if needed. The virtual environment can access that package.
+If pip needs to build `cffi`, the installer ensures the Termux build tools are
+available.
+On Linux and macOS, the installer uses pipx when available and falls back to pip
+in a virtual environment. The command is placed in `~/.local/bin` by default.
+Add that directory to your PATH to run `keyv` by name.
 
 ## Open and use the vault
 
